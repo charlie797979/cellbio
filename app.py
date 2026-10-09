@@ -74,30 +74,25 @@ def naver_news(keyword, client_id, client_secret, max_results=1000):
     return collected
 
 
-def one_sentence_summary(title, description, openai_key=None):
-    """OpenAI 키가 있으면 한 문장 요약, 없으면 API 설명을 안전하게 한 문장으로 정리."""
+def one_sentence_summary(title, description, gemini_key=None):
+    """Gemini 키가 있으면 한 문장 요약, 없으면 API 설명을 안전하게 한 문장으로 정리."""
     title = clean_html(title)
     description = clean_html(description)
-    if openai_key:
+    if gemini_key:
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=openai_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                temperature=0.2,
-                messages=[
-                    {"role": "system", "content": "당신은 기업 뉴스 클리핑 담당자다. 제공된 기사 제목과 설명만 근거로 한국어 한 문장 요약을 작성한다. 사실을 추가하거나 추측하지 말고, 1문장으로 간결하게 작성한다."},
-                    {"role": "user", "content": f"기사 제목: {title}\n기사 설명: {description}\n한 문장 요약:"},
-                ],
-            )
-            summary = (response.choices[0].message.content or "").strip()
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = f"당신은 기업 뉴스 클리핑 담당자다. 제공된 기사 제목과 설명만 근거로 한국어 한 문장 요약을 작성한다. 사실을 추가하거나 추측하지 말고, 1문장으로 간결하게 작성해줘.\n\n기사 제목: {title}\n기사 설명: {description}\n한 문장 요약:"
+            response = model.generate_content(prompt)
+            summary = (response.text or "").strip()
             summary = re.sub(r"\s+", " ", summary)
             if summary:
                 return summary
         except Exception:
             pass
 
-    # OpenAI 키가 없거나 요약 API에 실패하면 네이버 검색 API 설명을 사용
+    # Gemini 키가 없거나 요약 API에 실패하면 네이버 검색 API 설명을 사용
     source = description or title
     source = re.sub(r"\s+", " ", source).strip()
     if not source:
@@ -123,7 +118,7 @@ def infer_press(url):
     return host or "기타언론"
 
 
-def collect_company_news(keyword, start_dt, end_dt, client_id, client_secret, openai_key=None):
+def collect_company_news(keyword, start_dt, end_dt, client_id, client_secret, gemini_key=None):
     items = naver_news(keyword, client_id, client_secret)
     results, seen = [], set()
     for item in items:
@@ -145,7 +140,7 @@ def collect_company_news(keyword, start_dt, end_dt, client_id, client_secret, op
         results.append({
             "published": published,
             "keyword": keyword,
-            "summary": one_sentence_summary(title, description, openai_key),
+            "summary": one_sentence_summary(title, description, gemini_key),
             "url": url,
             "title": title,
             "press": infer_press(url),
@@ -246,11 +241,11 @@ with st.sidebar:
     client_secret = st.text_input("네이버 Client Secret", type="password", value=configured_secret("NAVER_CLIENT_SECRET"))
     st.caption("API 키를 코드에 직접 입력하지 마세요. 배포 시 Streamlit Secrets 또는 환경변수를 권장합니다.")
     st.subheader("요약 설정")
-    openai_key = st.text_input("OpenAI API 키 (선택)", type="password", value=configured_secret("OPENAI_API_KEY"))
-    if openai_key:
-        st.caption("OpenAI를 이용해 기사 제목·설명을 한 문장으로 요약합니다.")
+    gemini_key = st.text_input("Gemini API 키 (선택)", type="password", value=configured_secret("GEMINI_API_KEY"))
+    if gemini_key:
+        st.caption("Gemini를 이용해 기사 제목·설명을 한 문장으로 요약합니다.")
     else:
-        st.caption("OpenAI 키가 없으면 네이버 API의 기사 설명을 한 문장 형태로 정리합니다.")
+        st.caption("Gemini 키가 없으면 네이버 API의 기사 설명을 한 문장 형태로 정리합니다.")
 
 st.markdown("### 1. 회사 제공 엑셀 서식")
 uploaded_template = st.file_uploader("회사 서식 파일(.xlsx)을 선택하세요. 아래 기본 서식 파일이 있으면 자동 사용됩니다.", type=["xlsx"])
@@ -300,7 +295,7 @@ if st.button("🚀 6개 기업 뉴스 스크랩 및 엑셀 생성", type="primar
                 status.write(f"검색 중 ({i}/6): **{company}**")
                 try:
                     all_results[company] = collect_company_news(
-                        keyword, start_dt, end_dt, client_id.strip(), client_secret.strip(), openai_key.strip() or None
+                        keyword, start_dt, end_dt, client_id.strip(), client_secret.strip(), gemini_key.strip() or None
                     )
                 except Exception as exc:
                     all_results[company] = []
