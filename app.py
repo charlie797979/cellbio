@@ -74,60 +74,78 @@ def naver_news(keyword, client_id, client_secret, max_results=1000):
     return collected
 
 
+SUMMARY_ERRORS = []
+
+
+def fallback_summary(title):
+    """AI 요약이 불가능할 때 설명문을 통째로 붙이지 않고 제목만 간결하게 사용."""
+    text = re.sub(r"\s+", " ", clean_html(title)).strip().strip(" .。!?！？")
+    # 제목의 매체명/괄호 부제를 일부 정리
+    text = re.sub(r"\s*[-|｜]\s*[^-|｜]{1,25}$", "", text).strip()
+    if not text:
+        return "기사 제목을 확인해 주세요."
+    if len(text) > 75:
+        text = text[:72].rsplit(" ", 1)[0].rstrip(" ,，:：-—") + "…"
+    return text if text.endswith((".", "!", "?", "다", "했다", "됐다", "밝혔다", "전했다", "추진한다", "확대한다", "강화한다", "기록했다")) else text + "."
+
+
 def one_sentence_summary(title, description, gemini_key=None):
-    """Gemini 무료 등급(가능한 계정)을 이용해 기사 제목/설명을 한 문장으로 요약."""
+    """제목·설명 기반 AI 요약. API 오류를 숨기지 않고 기록한다."""
     title = clean_html(title)
     description = clean_html(description)
-    if gemini_key:
-        try:
-            prompt = f"""너는 한국 기업의 뉴스 클리핑 보고서를 작성하는 편집자다.
-아래 기사 제목과 설명에 있는 사실만 사용해 핵심을 한국어 한 문장으로 요약하라.
-규칙:
-- 결과는 오직 한 문장만 출력한다.
-- 35~70자 정도로 핵심 사실과 기업에 관련된 의미를 간결하게 쓴다.
-- 제목을 그대로 반복하지 말고, 기사 설명에 근거해 누가 무엇을 했거나 어떤 변화가 있는지 쓴다.
-- 기사에 없는 정보, 평가, 전망, 원인, 수치를 추측해 추가하지 않는다.
-- 서문, 따옴표, 글머리표, '요약:' 같은 표시는 쓰지 않는다.
-- 정보가 부족하면 제목과 설명에서 확인되는 사실만 짧게 요약한다.
+    if not gemini_key:
+        SUMMARY_ERRORS.append("Gemini API 키가 없어 제목 기반 대체문을 사용했습니다.")
+        return fallback_summary(title)
+
+    prompt = f"""너는 한국 기업의 뉴스 클리핑 보고서 편집자다.
+기사 제목과 설명에 명시된 사실만 사용해 아래 조건에 맞춰 요약하라.
+- 한국어 한 문장, 공백 포함 40~60자 내외(최대 70자).
+- 가장 중요한 사실 하나만 선택하고, 회사와 직접 관련된 내용 위주로 쓴다.
+- 인사 기사면 인사 내용, 실적 기사면 실적 수치, 주가 기사면 주가 변동만 요약한다. 서로 다른 주제를 섞지 않는다.
+- 기사 제목이나 설명을 길게 이어 붙이지 않는다.
+- 기사에 없는 평가, 전망, 원인, 수치를 추측하지 않는다.
+- 결과 문장만 출력하고 '요약:'이나 따옴표를 붙이지 않는다.
 기사 제목: {title}
 기사 설명: {description}
-요약:"""
-            response = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-                params={"key": gemini_key},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.15, "maxOutputTokens": 120},
-                },
-                timeout=30,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                summary = " ".join(
-                    part.get("text", "")
-                    for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                ).strip()
-                summary = re.sub(r"^['\"“”‘’ ]+|['\"“”‘’ ]+$", "", summary)
-                summary = re.sub(r"\s+", " ", summary)
-                # 여러 문장이 반환되면 첫 문장만 사용
-                pieces = re.split(r"(?<=[.!?。！？])\s+", summary)
-                summary = pieces[0].strip() if pieces else summary
-                if summary:
-                    if summary[-1] not in ".!?。！？":
-                        summary += "."
-                    return summary
-        except Exception:
-            pass
+한 문장 요약:"""
+    try:
+        response = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+            params={"key": gemini_key},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 100},
+            },
+            timeout=30,
+        )
+        if response.status_code != 200:
+            try:
+                detail = response.json().get("error", {}).get("message", response.text[:180])
+            except Exception:
+                detail = response.text[:180]
+            raise RuntimeError(f"Gemini API 오류 ({response.status_code}): {detail}")
 
-    # API 키가 없거나 호출에 실패하면 설명을 대신 사용하되, 한 문장임을 보장
-    source = re.sub(r"\s+", " ", description or title).strip()
-    if not source:
-        return title.rstrip(" .。") + "."
-    source = re.split(r"(?<=[.!?。！？])\s+", source)[0].strip()
-    source = source.rstrip(" .。!?！？")
-    if len(source) > 160:
-        source = source[:157].rsplit(" ", 1)[0] + "..."
-    return source + "."
+        data = response.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise RuntimeError("Gemini가 요약 결과를 반환하지 않았습니다.")
+        parts = candidates[0].get("content", {}).get("parts", [])
+        summary = " ".join(part.get("text", "") for part in parts).strip()
+        summary = re.sub(r"^(요약[:：]\s*|['\"“”‘’]+)", "", summary)
+        summary = re.sub(r"\s+", " ", summary).strip().strip("'\"“”‘’ ")
+        # 한 문장만 취하고, 너무 긴 결과는 잘라 왜곡하지 말고 오류로 처리한다.
+        pieces = re.split(r"(?<=[.!?。！？])\s+", summary)
+        summary = pieces[0].strip() if pieces else summary
+        if not summary:
+            raise RuntimeError("Gemini가 빈 요약을 반환했습니다.")
+        if len(summary) > 90:
+            raise RuntimeError(f"요약이 너무 깁니다({len(summary)}자). 제목 기반 대체문을 사용했습니다.")
+        if summary[-1] not in ".!?。！？":
+            summary += "."
+        return summary
+    except Exception as exc:
+        SUMMARY_ERRORS.append(str(exc))
+        return fallback_summary(title)
 
 
 def infer_press(url):
@@ -311,6 +329,7 @@ if st.button("🚀 6개 기업 뉴스 스크랩 및 엑셀 생성", type="primar
         if end_dt <= start_dt:
             st.error("현재 시각이 시작 시각보다 빠릅니다. 날짜/시간 설정을 확인해 주세요.")
         else:
+            SUMMARY_ERRORS.clear()
             all_results = {}
             errors = {}
             progress = st.progress(0)
@@ -334,6 +353,12 @@ if st.button("🚀 6개 기업 뉴스 스크랩 및 엑셀 생성", type="primar
                     st.warning("일부 기업 검색 중 오류가 발생했습니다. 해당 기업은 0건으로 기록되었습니다.")
                     for company, message in errors.items():
                         st.error(f"{company}: {message}")
+                if SUMMARY_ERRORS:
+                    unique_summary_errors = list(dict.fromkeys(SUMMARY_ERRORS))
+                    st.warning(f"요약 과정에서 {len(SUMMARY_ERRORS)}건의 문제가 발생했습니다. 문제가 있는 기사는 제목 기반 대체문으로 저장했습니다.")
+                    with st.expander("요약 오류 자세히 보기"):
+                        for message in unique_summary_errors[:10]:
+                            st.write(f"- {message}")
                 filename = f"뉴스클리핑_{run_now:%Y%m%d_%H%M}.xlsx"
                 st.download_button(
                     "📥 완성된 회사 보고서 엑셀 다운로드",
