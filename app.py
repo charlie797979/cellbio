@@ -82,15 +82,22 @@ def one_sentence_summary(title, description, gemini_key=None):
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            prompt = f"당신은 기업 뉴스 클리핑 담당자다. 제공된 기사 제목과 설명만 근거로 한국어 한 문장 요약을 작성한다. 사실을 추가하거나 추측하지 말고, 1문장으로 간결하게 작성해줘.\n\n기사 제목: {title}\n기사 설명: {description}\n한 문장 요약:"
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            prompt = (
+                f"당신은 기업 뉴스 클리핑 담당자다. "
+                f"제공된 기사 제목과 설명만 근거로 한국어 한 문장 요약을 작성한다. "
+                f"사실을 추가하거나 추측하지 말고, 1문장으로 간결하게 작성해줘.\n\n"
+                f"기사 제목: {title}\n"
+                f"기사 설명: {description}\n"
+                f"한 문장 요약:"
+            )
             response = model.generate_content(prompt)
             summary = (response.text or "").strip()
             summary = re.sub(r"\s+", " ", summary)
             if summary:
                 return summary
-        except Exception:
-            pass
+        except Exception as e:
+            st.sidebar.warning(f"Gemini 요약 오류 발생: {e}")
 
     # Gemini 키가 없거나 요약 API에 실패하면 네이버 검색 API 설명을 사용
     source = description or title
