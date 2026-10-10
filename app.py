@@ -15,7 +15,7 @@ from google.genai import types
 
 KST = ZoneInfo("Asia/Seoul")
 MAX_ARTICLES = 10
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3.5-flash-lite"
 
 st.set_page_config(page_title="무료 뉴스 한 문장 요약", page_icon="📰", layout="wide")
 st.title("📰 뉴스 검색 · 한 문장 요약")
