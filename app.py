@@ -12,15 +12,14 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-from playwright.sync_api import sync_playwright
 
 KST = ZoneInfo("Asia/Seoul")
 MAX_ARTICLES = 10
 MODEL = "gemini-3.8-flash"
 
 st.set_page_config(page_title="무료 뉴스 한 문장 요약", page_icon="📰", layout="wide")
-st.title("📰 뉴스 검색 · 한 문장 요약 (Playwright 브라우저 엔진)")
-st.caption("한국 시간 기준 어제 13:00부터 현재까지 · Google News RSS + Gemini + Playwright")
+st.title("📰 뉴스 검색 · 한 문장 요약")
+st.caption("한국 시간 기준 어제 13:00부터 현재까지 · Google News RSS + Gemini")
 
 def kst_now():
     return datetime.now(KST)
@@ -39,7 +38,7 @@ def parse_published(entry):
 def search_news(keyword, start, end, max_items=MAX_ARTICLES):
     query = f'{keyword} after:{start.strftime("%Y-%m-%d")} before:{(end + timedelta(days=1)).strftime("%Y-%m-%d")}'
     url = "https://news.google.com/rss/search?q=" + quote(query) + "&hl=ko&gl=KR&ceid=KR:ko"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
     response = requests.get(url, headers=headers, timeout=20)
     response.raise_for_status()
     feed = feedparser.parse(response.content)
@@ -70,51 +69,46 @@ def search_news(keyword, start, end, max_items=MAX_ARTICLES):
     return rows
 
 def get_article_text(url, title):
-    """Playwright를 이용해 실제 브라우저 환경에서 페이지를 로드하고 본문을 추출합니다."""
+    """원문 본문을 수집하고, 차단되거나 누락될 경우 제목과 메타 태그를 백업으로 활용합니다."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
-            page.goto(url, timeout=25000, wait_until="domcontentloaded")
-            page.wait_for_timeout(1500)
-            
-            content = page.content()
-            browser.close()
-            
-            soup = BeautifulSoup(content, "html.parser")
+        response = requests.get(url, headers=headers, timeout=12, allow_redirects=True)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-            descriptions = []
-            for selector in (
-                'meta[property="og:description"]',
-                'meta[name="description"]',
-                'meta[name="twitter:description"]',
-            ):
-                tag = soup.select_one(selector)
-                if tag and tag.get("content"):
-                    descriptions.append(tag["content"].strip())
+        descriptions = []
+        for selector in (
+            'meta[property="og:description"]',
+            'meta[name="description"]',
+            'meta[name="twitter:description"]',
+        ):
+            tag = soup.select_one(selector)
+            if tag and tag.get("content"):
+                descriptions.append(tag["content"].strip())
 
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
-                tag.decompose()
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
+            tag.decompose()
 
-            paragraphs = []
-            for p in soup.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) >= 15:
-                    paragraphs.append(text)
+        paragraphs = []
+        for p in soup.find_all("p"):
+            text = p.get_text(" ", strip=True)
+            if len(text) >= 15:
+                paragraphs.append(text)
 
-            body = "\n".join(dict.fromkeys(paragraphs))
+        body = "\n".join(dict.fromkeys(paragraphs))
 
-            if len(body.strip()) < 50 and descriptions:
-                body = "\n".join(descriptions)
+        if len(body.strip()) < 50 and descriptions:
+            body = "\n".join(descriptions)
 
-            if len(body.strip()) < 30:
-                body = f"기사 제목: {title}\n(본문 추출이 원활하지 않아 메타 정보 또는 제목을 기반으로 요약합니다.)"
+        if len(body.strip()) < 30:
+            body = f"기사 제목: {title}"
 
-            return body[:18000]
-    except Exception as e:
-        return f"기사 제목: {title}\n(본문 로딩 실패: {str(e)[:50]})"
+        return body[:18000]
+    except Exception:
+        return f"기사 제목: {title}"
 
 def summarize_one(client, title, article_text):
     prompt = f"""
@@ -189,7 +183,7 @@ if st.button("🔎 뉴스 검색 및 한 문장 요약", type="primary", disable
         progress = st.progress(0, text="요약 준비 중...")
         for i, article in enumerate(articles):
             try:
-                with st.spinner(f"{i+1}/{len(articles)} 기사 브라우저 로딩 및 요약 중..."):
+                with st.spinner(f"{i+1}/{len(articles)} 기사 요약 중..."):
                     body = get_article_text(article["원문 링크"], article["기사 제목"])
                     summary = summarize_one(client, article["기사 제목"], body)
                 article["요약"] = summary
@@ -220,7 +214,7 @@ if "news_results" in st.session_state:
     for _, row in df.iterrows():
         with st.container(border=True):
             st.markdown(f"**{row['기사 제목']}**")
-            st.caption(f"{row['발행 시각']} · {row['언론사'] or '언론사 정보 없음'}")
+            st.caption(f"{row['발행 시각']} · {row['언론사' or '언론사 정보 없음']}")
             st.write(row["요약"])
             st.markdown(f"[원문 기사 열기]({row['원문 링크']})")
     buffer = io.BytesIO()
