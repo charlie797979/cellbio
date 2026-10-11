@@ -15,8 +15,8 @@ from google.genai import types
 
 KST = ZoneInfo("Asia/Seoul")
 MAX_ARTICLES = 10
-# 실제 사용 가능한 모델명으로 조정 (필요시 'gemini-2.5-flash' 등으로 변경 가능)
-MODEL = "gemini-2.5-flash"
+# 오류 메시지 안내에 따라 gemini-3.8-flash로 설정
+MODEL = "gemini-3.8-flash"
 
 st.set_page_config(page_title="무료 뉴스 한 문장 요약", page_icon="📰", layout="wide")
 st.title("📰 뉴스 검색 · 한 문장 요약")
@@ -92,20 +92,17 @@ def get_article_text(url, title):
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
             tag.decompose()
 
-        # 본문 후보 태그 탐색 완화
         paragraphs = []
         for p in soup.find_all("p"):
             text = p.get_text(" ", strip=True)
-            if len(text) >= 15:  # 글자수 기준을 조금 낮춰서 다양한 본문 수집
+            if len(text) >= 15:
                 paragraphs.append(text)
 
         body = "\n".join(dict.fromkeys(paragraphs))
 
-        # 본문이 부족하면 메타 태그 설명 활용
         if len(body.strip()) < 50 and descriptions:
             body = "\n".join(descriptions)
 
-        # 최소 기준을 낮추어 제목과 메타 정보만으로도 요약 시도 가능하게 변경
         if len(body.strip()) < 30:
             body = f"기사 제목: {title}\n(본문 추출이 원활하지 않아 메타 정보 또는 제목을 기반으로 요약합니다.)"
 
