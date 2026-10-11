@@ -1,7 +1,0 @@
-feedparser
-pandas
-requests
-streamlit
-beautifulsoup4
-google-genai
-openpyxl
